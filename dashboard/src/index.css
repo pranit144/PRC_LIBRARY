@@ -1,0 +1,76 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* -- palette -------------------------------------------------- */
+  --ink: #0B0E14;           /* base background */
+  --panel: #11151D;         /* card/panel background */
+  --panel-raised: #161B25;  /* slightly raised surface */
+  --line: #232936;          /* hairline borders */
+  --line-soft: #1A1F2A;
+
+  --text-primary: #E7EAF0;
+  --text-secondary: #8B93A7;
+  --text-faint: #565E70;
+
+  --observed: #E8A33D;      /* amber: real, measured data */
+  --observed-dim: #6B5628;
+  --predicted: #5CC8C2;     /* cyan: forecasted / predicted data */
+  --predicted-dim: #2E5C58;
+
+  --good: #5FBF7A;
+  --warn: #E8A33D;
+  --bad: #E2604F;
+
+  --font-display: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* faint scanline / instrument texture on the base background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.012) 0px,
+    rgba(255, 255, 255, 0.012) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  z-index: 0;
+}
+
+a { color: inherit; text-decoration: none; }
+
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+::selection { background: var(--observed-dim); color: var(--text-primary); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--ink); }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

@@ -1,0 +1,23 @@
+FROM node:20-slim AS dashboard-build
+WORKDIR /dashboard
+COPY dashboard/package*.json ./
+RUN npm install
+COPY dashboard/ ./
+RUN npm run build
+
+FROM python:3.11-slim
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY sdk ./sdk
+COPY server ./server
+COPY storage ./storage
+COPY analytics ./analytics
+COPY forecasting ./forecasting
+COPY assistant ./assistant
+COPY --from=dashboard-build /dashboard/dist ./dashboard/dist
+
+RUN pip install --no-cache-dir -e .
+
+EXPOSE 8000
+CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8000"]

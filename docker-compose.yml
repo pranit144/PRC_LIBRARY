@@ -1,0 +1,19 @@
+version: "3.9"
+
+# Single-port deployment: one container serves both the API and the
+# built dashboard on :8000, which is what makes it work behind Colab's
+# or Kaggle's single-port proxying and behind simple reverse proxies.
+services:
+  prc:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "8000:8000"
+    volumes:
+      - prc_data:/app/data
+    environment:
+      - PRC_DB_PATH=/app/data/prc.db
+
+volumes:
+  prc_data:
