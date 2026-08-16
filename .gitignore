@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+
+*.db
+.prc/
+data/
+
+# dashboard
+dashboard/node_modules/
+dashboard/dist/
+
+# example artifacts
+examples/mnist/data/
+examples/mnist/checkpoints/
