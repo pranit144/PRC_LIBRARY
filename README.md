@@ -1,6 +1,7 @@
 # prc
 
-[![CI](https://github.com/YOUR_USERNAME/prc/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/prc/actions/workflows/ci.yml)
+<img width="447" height="447" alt="image" src="https://github.com/user-attachments/assets/799df09c-cf3d-4e7c-bb0d-c2e200fc8a2b" />
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](pyproject.toml)
 
