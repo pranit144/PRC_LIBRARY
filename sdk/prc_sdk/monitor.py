@@ -60,6 +60,8 @@ class Monitor:
         local_dir: str = ".prc",
         run_id: Optional[str] = None,
         show_live_url: bool = True,
+        enable_hardware_monitoring: bool = False,
+        hardware_interval_seconds: float = 5.0,
     ):
         self.project = project
         self.run_name = run_name or f"run-{int(time.time())}"
@@ -69,6 +71,7 @@ class Monitor:
         self._start_time = time.time()
         self._last_step = -1
         self._last_epoch = -1
+        self._hardware_sampler = None
 
         self.server_url = server_url or os.environ.get("PRC_SERVER_URL", "http://localhost:8000")
 
@@ -90,6 +93,16 @@ class Monitor:
 
         if show_live_url:
             announce_live_url(self.server_url, self.run_id)
+
+        if enable_hardware_monitoring:
+            try:
+                from .hardware import HardwareSampler
+                self._hardware_sampler = HardwareSampler(
+                    self, interval_seconds=hardware_interval_seconds
+                )
+                self._hardware_sampler.start()
+            except Exception:
+                logger.exception("prc: could not start hardware sampler (non-fatal)")
 
     # -- internal -----------------------------------------------------
     def _emit(self, event: Event) -> None:
@@ -158,6 +171,13 @@ class Monitor:
         if self._finished:
             return
         self._finished = True
+        # Stop hardware sampler before flushing the run_finished event so
+        # the final hardware snapshot is written before the run closes.
+        if self._hardware_sampler is not None:
+            try:
+                self._hardware_sampler.stop()
+            except Exception:
+                logger.exception("prc: error stopping hardware sampler (non-fatal)")
         self._emit(run_finished_event(self.run_id, status))
         if self._sender is not None:
             self._sender.close()

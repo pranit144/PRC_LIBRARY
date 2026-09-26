@@ -23,13 +23,16 @@ a guarantee.
 5. [Quick start](#5-quick-start)
 6. [PyTorch example](#6-pytorch-example)
 7. [TensorFlow / Keras example](#7-tensorflow--keras-example)
-8. [Dashboard](#8-dashboard)
-9. [Forecasting](#9-forecasting)
-10. [Anomaly detection](#10-anomaly-detection)
-11. [Roadmap](#11-roadmap)
-12. [Development setup](#12-development-setup)
-13. [Contributing](#13-contributing)
-14. [Project layout](#project-layout)
+8. [Hugging Face Trainer example](#8-hugging-face-trainer-example)
+9. [PyTorch Lightning example](#9-pytorch-lightning-example)
+10. [Hardware telemetry](#10-hardware-telemetry)
+11. [Dashboard](#11-dashboard)
+12. [Forecasting](#12-forecasting)
+13. [Anomaly detection](#13-anomaly-detection)
+14. [Roadmap](#14-roadmap)
+15. [Development setup](#15-development-setup)
+16. [Contributing](#16-contributing)
+17. [Project layout](#project-layout)
 
 ## 1. What prc is
 
@@ -98,11 +101,14 @@ Requires Python 3.11+ and Node 20+ (for building the dashboard).
 ```bash
 git clone https://github.com/YOUR_USERNAME/prc.git
 cd prc
-pip install -e ".[dev]"          # SDK + server + storage + analytics + forecasting + assistant
-pip install -e ".[pytorch]"      # optional, for the PyTorch integration
-pip install -e ".[tensorflow]"   # optional, for the TensorFlow/Keras integration
-pip install -e ".[tunnel]"       # optional, ngrok fallback for Kaggle/remote sessions
-pip install -e ".[all]"          # everything above at once
+pip install -e ".[dev]"            # SDK + server + storage + analytics + forecasting + assistant
+pip install -e ".[pytorch]"        # optional — PyTorch hooks (TorchMonitorHook)
+pip install -e ".[tensorflow]"     # optional — TensorFlow/Keras callback
+pip install -e ".[transformers]"   # optional — Hugging Face TrainerCallback
+pip install -e ".[lightning]"      # optional — PyTorch Lightning callback
+pip install -e ".[hardware]"       # optional — background CPU/RAM/GPU telemetry (psutil + pynvml)
+pip install -e ".[tunnel]"         # optional — ngrok fallback for Kaggle/remote sessions
+pip install -e ".[all]"            # everything above at once
 ```
 
 ## 5. Quick start
@@ -221,7 +227,142 @@ mirroring the PyTorch path. See `prc_sdk/tensorflow.py` for details.
 
 See `examples/keras_mnist/train.py` for a complete, runnable script.
 
-## 8. Dashboard
+## 8. Hugging Face Trainer example
+
+Works with any model fine-tuned via `transformers.Trainer` — LLMs (Llama,
+Mistral, Qwen, Phi), encoder models (BERT, RoBERTa), vision transformers,
+diffusion pipelines built on Trainer, and more.
+
+```python
+from prc_sdk import Monitor
+from prc_sdk.transformers import PrcHfCallback
+
+monitor = Monitor(project="llama-finetune", run_name="experiment-01")
+# 🔴 Live monitoring: http://localhost:8000/runs/run_abc123
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    callbacks=[PrcHfCallback(monitor)],
+)
+trainer.train()
+monitor.finish()
+```
+
+`PrcHfCallback` automatically:
+- Extracts `TrainingArguments` (learning rate, batch size, scheduler, optimizer,
+  warmup, seed, …) as the run config.
+- Maps HF's `loss` / `eval_loss` to prc's canonical `train_loss` / `val_loss`
+  keys so anomaly detectors work out of the box.
+- Filters out non-scalar log entries (`total_flos`, string fields, …).
+- Logs checkpoint paths on every `on_save` event.
+- **In DDP / FSDP / DeepSpeed multi-GPU runs, only rank 0 emits events** —
+  no duplicate data.
+
+Install the extra dependency:
+```bash
+pip install -e ".[transformers]"
+# or: pip install transformers>=4.35
+```
+
+## 9. PyTorch Lightning example
+
+Works with modern Lightning (`lightning.pytorch`) and legacy
+`pytorch_lightning` — the callback detects which is installed automatically.
+
+```python
+import lightning.pytorch as pl
+from prc_sdk import Monitor
+from prc_sdk.lightning import PrcLightningCallback
+
+monitor = Monitor(project="my-model", run_name="experiment-01")
+# 🔴 Live monitoring: http://localhost:8000/runs/run_abc123
+
+trainer = pl.Trainer(
+    max_epochs=10,
+    callbacks=[PrcLightningCallback(monitor)],
+)
+trainer.fit(model, train_loader, val_loader)
+monitor.finish()
+```
+
+`PrcLightningCallback` automatically:
+- Harvests `trainer.callback_metrics` (train loss, val loss, any logged metric)
+  at every batch and validation epoch end.
+- Extracts Trainer settings (`max_epochs`, `precision`, `strategy`, …) and
+  `LightningModule.hparams` as the run config.
+- Calls `monitor.finish(status="failed")` automatically if an exception
+  terminates training.
+- Logs checkpoint paths via `on_save_checkpoint`.
+- **Only the rank-0 process emits events** in multi-GPU / multi-node runs.
+- Accepts a `log_every_n_steps` argument to thin out step-level logging for
+  very fast inner loops.
+
+Install the extra dependency:
+```bash
+pip install -e ".[lightning]"
+# or: pip install lightning>=2.0
+```
+
+## 10. Hardware telemetry
+
+prc can automatically collect CPU, RAM, and GPU metrics in a background
+daemon thread so you can diagnose hardware bottlenecks and memory leaks
+without changing your training loop.
+
+```python
+from prc_sdk import Monitor
+
+monitor = Monitor(
+    project="my-model",
+    run_name="experiment-01",
+    enable_hardware_monitoring=True,   # default: False
+    hardware_interval_seconds=5.0,    # sample every 5 s
+)
+# ... training ...
+monitor.finish()  # sampler thread stops cleanly here
+```
+
+Metrics collected and what provides them:
+
+| Metric | Provider |
+|---|---|
+| `cpu_utilization_pct` | `psutil` |
+| `ram_used_mb`, `ram_total_mb`, `ram_utilization_pct` | `psutil` |
+| `gpu_utilization_pct` | `pynvml` (NVIDIA) |
+| `gpu_memory_used_mb`, `gpu_memory_total_mb`, `gpu_memory_utilization_pct` | `pynvml` or `torch.cuda` |
+| `gpu_temperature_c` | `pynvml` (where supported) |
+| `gpu_name`, `gpu_index`, `gpu_count` | `pynvml` or `torch.cuda` |
+
+**Fallback chain:** `pynvml` (full compute % + temperature) → `torch.cuda`
+(VRAM only) → nothing (CPU/RAM still reported). The sampler never crashes
+training regardless of what is or isn't installed.
+
+You can also use it manually for finer control:
+
+```python
+from prc_sdk.hardware import HardwareSampler, collect_hardware_snapshot
+
+# One-shot snapshot
+print(collect_hardware_snapshot())
+# {'cpu_utilization_pct': 12.3, 'ram_used_mb': 4096.0, ...}
+
+# Or run the background thread yourself
+sampler = HardwareSampler(monitor, interval_seconds=3)
+sampler.start()
+# ... training ...
+sampler.stop()
+```
+
+Install the extra dependencies:
+```bash
+pip install -e ".[hardware]"
+# or: pip install psutil>=5.9 pynvml>=11.0
+```
+
+## 11. Dashboard
 
 The dashboard is served from the same port as the API in production
 mode (see Quick Start), which is what makes the live-monitoring link
@@ -244,7 +385,7 @@ The run page shows:
   a deterministic, explainable answer grounded in detected anomalies
   and the current forecast
 
-## 9. Forecasting
+## 12. Forecasting
 
 `forecasting.SimpleTrendForecastEngine` is an explainable statistical
 baseline: it fits a linear trend to the recent metric history and
@@ -257,7 +398,7 @@ The engine is defined behind the `ForecastEngine` abstract interface so
 a more sophisticated model can be dropped in later without touching the
 API or dashboard.
 
-## 10. Anomaly detection
+## 13. Anomaly detection
 
 Four deterministic detectors ship in the MVP (`analytics/`):
 
@@ -271,21 +412,22 @@ Four deterministic detectors ship in the MVP (`analytics/`):
 All results carry a `severity`, a `confidence` (0–1), and a plain-
 language `message` that avoids asserting certainty.
 
-## 11. Roadmap
+## 14. Roadmap
 
-- **v0.1 (this repo)** — PyTorch + TensorFlow/Keras SDKs, live
-  dashboard, deterministic anomaly detection, baseline forecasting,
-  deterministic assistant, environment-aware live links (local, Colab,
-  Kaggle, SSH, ngrok fallback)
-- **v0.2** — Hugging Face integration, better forecasting, experiment
-  comparison
-- **v0.3** — LLM-backed assistant, counterfactual experiment
-  forecasting, dataset analysis
+- **v0.1 (this repo)** — PyTorch + TensorFlow/Keras SDKs, live dashboard,
+  deterministic anomaly detection, baseline forecasting, deterministic
+  assistant, environment-aware live links (local, Colab, Kaggle, SSH, ngrok
+  fallback), **Hugging Face Trainer callback**, **PyTorch Lightning callback**,
+  **background hardware telemetry** (CPU/RAM/GPU via pynvml + psutil)
+- **v0.2** — experiment comparison / run leaderboard, better forecasting
+  (non-linear curve fitting), webhook notifications (Slack/Discord)
+- **v0.3** — LLM-backed assistant (Gemini / OpenAI / Ollama), NaN/Inf crash
+  watchdog, counterfactual experiment forecasting
 - **v0.4** — example-level debugging, historical run intelligence, team
-  collaboration
+  collaboration, PostgreSQL storage adapter
 - **v1.0** — a complete AI training intelligence platform
 
-## 12. Development setup
+## 15. Development setup
 
 ```bash
 pip install -e ".[dev]"
@@ -310,14 +452,16 @@ production mode above):
 docker compose up --build
 ```
 
-## 13. Contributing
+## 16. Contributing
 
-This is an early-stage MVP. Useful contributions right now:
+This is an early-stage project. Useful contributions right now:
 
-- Hugging Face integration
-- More detectors in `analytics/`
+- More detectors in `analytics/` (NaN/Inf watchdog, dead neuron detector, LR auditor)
 - A PostgreSQL implementation of `storage.Storage`
 - An LLM-backed implementation of `assistant.TrainingAssistant`
+- Non-linear forecasting engine (`AsymptoticTrendForecastEngine`)
+- Multi-run comparison dashboard view
+- Webhook notification sink (Slack / Discord / email)
 
 Please add tests for new functionality under `tests/` — see the
 existing suite for the patterns used (fixtures, `TestClient` for API
@@ -328,18 +472,28 @@ code-level walkthrough of how the pieces fit together before you start.
 
 ```
 prc/
-├── sdk/prc_sdk/          Python SDK (Monitor, event schema, PyTorch + TF/Keras hooks)
-├── server/                FastAPI app: REST + WebSocket + dashboard static serving
-├── storage/                Storage abstraction + SQLite implementation
-├── analytics/              Deterministic anomaly detectors
-├── forecasting/            Forecast engine abstraction + baseline impl
-├── assistant/              Deterministic training assistant
-├── dashboard/              React + TypeScript frontend
+├── sdk/prc_sdk/
+│   ├── monitor.py           Monitor — the main user-facing entry point
+│   ├── events.py            Event protocol (versioned, framework-independent)
+│   ├── transport.py         LocalBuffer + HttpSender (fail-safe I/O)
+│   ├── live_url.py          Environment-aware live link (local/Colab/Kaggle/SSH)
+│   ├── pytorch.py           PyTorch hooks: gradient/parameter/GPU stats, TorchMonitorHook
+│   ├── tensorflow.py        TensorFlow/Keras callback (PrcKerasCallback)
+│   ├── transformers.py      Hugging Face TrainerCallback (PrcHfCallback)  ← new
+│   ├── lightning.py         PyTorch Lightning callback (PrcLightningCallback) ← new
+│   └── hardware.py          Background hardware sampler: CPU/RAM/GPU telemetry ← new
+├── server/                  FastAPI app: REST + WebSocket + dashboard static serving
+├── storage/                 Storage abstraction + SQLite implementation
+├── analytics/               Deterministic anomaly detectors (overfitting, plateau,
+│                              gradient anomaly, instability)
+├── forecasting/             Forecast engine abstraction + linear baseline impl
+├── assistant/               Deterministic training assistant
+├── dashboard/               React + TypeScript frontend
 ├── examples/
 │   ├── mnist/               PyTorch end-to-end example
-│   └── keras_mnist/          TensorFlow/Keras end-to-end example
-├── tests/                  pytest suite (36 tests)
-├── docs/KT_NOTES.md        In-depth code walkthrough / knowledge transfer notes
+│   └── keras_mnist/         TensorFlow/Keras end-to-end example
+├── tests/                   pytest suite (59 tests)
+├── docs/KT_NOTES.md         In-depth code walkthrough / knowledge transfer notes
 ├── .github/workflows/ci.yml
 ├── pyproject.toml
 ├── docker-compose.yml
